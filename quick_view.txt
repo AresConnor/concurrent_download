@@ -1,0 +1,24 @@
+项目结构
+
+DownloadWorkerManager
+├── DownloadWorker
+├── DownloadWorker
+├── DownloadWorker
+├── DownloadWorker
+├── ...
+
+DownloadWorkerManager是一个管理器，负责管理所有的DownloadWorker，每个DownloadWorker负责下载一个文件。
+
+     DownloadWorkerManager
+             | ^
+             | |    Event
+             | |
+      Task   | |
+             v |
+        DownloadWorker
+
+     Task: 任务,封装了下载的url,下载的分段位置长度,下载的状态等信息
+     Event: 事件,事件的发出者和接受者，封装了下载的状态,下载的进度等信息
+
+DownloadWorkerManager和DownloadWorker之间通过Event进行通信,DownloadWorkerManager通过Event通知外部下载的状态,进度等信息
+咋看？？？>???
