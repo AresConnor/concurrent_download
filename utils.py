@@ -1,11 +1,6 @@
-import enum
 import os
 
 from tqdm.asyncio import tqdm
-
-
-
-
 
 def need_redirection(response):
     if response.status == 302:

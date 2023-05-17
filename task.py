@@ -1,5 +1,4 @@
 import enum
-import functools
 from math import floor
 from typing import Optional, List, Iterable
 

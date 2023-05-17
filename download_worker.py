@@ -2,9 +2,9 @@ import enum
 import asyncio
 from typing import Optional
 
-from .events import WorkerBufferFullEvent, WorkerActiveEvent, WorkerInactiveEvent, WorkerRequestTaskEvent, Event, \
+from events import WorkerBufferFullEvent, WorkerActiveEvent, WorkerInactiveEvent, WorkerRequestTaskEvent, Event, \
     WorkerReceivedTaskEvent
-from .task import WorkerTask
+from task import WorkerTask
 
 
 class DownloadWorker:

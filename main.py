@@ -1,14 +1,13 @@
 import asyncio
 import os
-import sys
 from typing import Tuple, Optional
 
 import aiofiles
 import aiohttp
 from tqdm.asyncio import tqdm
 
-from multi_downloader.download_manager import DownloadWorkerManager
-from multi_downloader.utils import check_if_support_breakpoint, merge_file, check_file, need_redirection
+from download_manager import DownloadWorkerManager
+from utils import check_if_support_breakpoint, merge_file, check_file, need_redirection
 
 
 
@@ -93,4 +92,5 @@ async def main():
 
 
 if __name__ == '__main__':
+    # pip freeze > requirements.txt
     asyncio.run(main())

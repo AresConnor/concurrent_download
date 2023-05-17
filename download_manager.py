@@ -6,11 +6,11 @@ from typing import List, Dict, Iterable
 from aiohttp import ClientSession
 from tqdm import tqdm
 
-from multi_downloader.download_worker import DownloadWorker
-from multi_downloader.events import WorkerBufferFullEvent, WorkerInactiveEvent, WorkerActiveEvent, \
+from download_worker import DownloadWorker
+from events import WorkerBufferFullEvent, WorkerInactiveEvent, WorkerActiveEvent, \
     WorkerReceivedTaskEvent
-from multi_downloader.file_writer import FileWriter
-from multi_downloader.task import WorkerTask, WorkerTaskMaxHeap
+from file_writer import FileWriter
+from task import WorkerTask, WorkerTaskMaxHeap
 
 
 class WorkerTaskHistory:
