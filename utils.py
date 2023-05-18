@@ -2,6 +2,7 @@ import os
 
 from tqdm.asyncio import tqdm
 
+
 def need_redirection(response):
     if response.status == 302:
         return True
@@ -46,3 +47,22 @@ def merge_file(output_path, fn, total_size, thread):
                     f.write(part_f.read())
                     pbar.update(os.path.getsize(part_file_name))
                 os.remove(part_file_name)
+
+
+def print_method_name(func):
+    def wrapper(*args, **kwargs):
+        class_name = args[0].__class__.__name__
+        method_name = func.__name__
+        print(f"Class: {class_name}, Method: {method_name}")
+        return func(*args, **kwargs)
+    return wrapper
+
+
+def print_func_name(f):
+    name = f.__name__
+
+    def new_f(*a, **ka):
+        print(f"func name = {name}")
+        return f(*a, **ka)
+
+    return new_f

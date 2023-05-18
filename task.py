@@ -1,11 +1,12 @@
 import enum
 from math import floor
 from typing import Optional, List, Iterable
+from utils import print_method_name
 
 
 class WorkerTask:
-    # 256KB
-    SAFE_CHUNK_SIZE = 256 * 1024
+    # 512KB
+    SAFE_CHUNK_SIZE = 512 * 1024
 
     # 因为是协程,所以是线程安全的
     NEXT_ID = 0
@@ -19,7 +20,7 @@ class WorkerTask:
         self.headers = headers
         self.proxy = proxy
         self._state = WorkerTask.State.PENDING
-        self.worker_id = None
+        self.worker_id = 0
 
         # 用于重启下载后的任务回溯,谁的parent_id == -1 表示他是根任务
         self.id = WorkerTask.NEXT_ID
@@ -41,12 +42,23 @@ class WorkerTask:
     def is_running(self):
         return self._state == WorkerTask.State.RUNNING
 
+    def is_assigned(self):
+        """
+        :return:返回一个bool或者worker_id
+        -1代表被二次分配但还没有被worker认领
+        """
+        return self.worker_id
+
+    def assign(self, worker_id):
+        self.worker_id = worker_id
+
     def get_size(self):
         return self.end_byte - self.start_byte + 1
 
     def update_owner(self, worker_id):
         self.worker_id = worker_id
 
+    # @print_method_name
     def try_divide(self) -> Optional['WorkerTask']:
         """
         将任务分割为两个任务
@@ -61,6 +73,7 @@ class WorkerTask:
         else:
             return None
 
+    # @print_method_name
     def try_divides(self, task_num) -> List['WorkerTask']:
         """
         将任务分割为task_num个,或者最接近于task_num个（如果dividable_time<task_num）任务
@@ -83,12 +96,14 @@ class WorkerTask:
             self.end_byte = new_task_begin - 1
         return new_tasks
 
+    # @print_method_name
     def dividable(self) -> bool:
         if self._state in [WorkerTask.State.RUNNING, WorkerTask.State.PENDING]:
             if self.current_byte + 2 * self.SAFE_CHUNK_SIZE < self.end_byte:
                 return True
         return False
 
+    # @print_method_name
     def dividable_times(self) -> int:
         if self.dividable():
             if self.is_running():
@@ -104,8 +119,12 @@ class WorkerTask:
     def __hash__(self):
         return hash((self.url, self.start_byte, self.end_byte))
 
+    def __str__(self):
+        return f"WorkerTask:id={self.id}, begin={self.start_byte}, end={self.end_byte},state={self._state}"
+
     class State(enum.Enum):
         # TASK_NOT_FOUND = -1
+        # 被分配但没运行,或者仅仅是被初始化的都是PENDING
         PENDING = 0
         RUNNING = 1
         FINISHED = 2
@@ -147,9 +166,15 @@ class WorkerTaskMaxHeap:
             else:
                 break
 
+    def has(self, task):
+        return task in self.task_indices
+
+    # @print_method_name
     def get_max(self) -> WorkerTask:
+        print()
         return self.heap[0]
 
+    # @print_method_name
     def pop_max(self) -> WorkerTask:
         max_task = self.heap[0]
         last_task = self.heap.pop()
@@ -160,6 +185,7 @@ class WorkerTaskMaxHeap:
         del self.task_indices[max_task]
         return max_task
 
+    # @print_method_name
     def push(self, task: WorkerTask):
         if task in self.task_indices:
             raise ValueError("Task already exists in the heap")
@@ -167,10 +193,12 @@ class WorkerTaskMaxHeap:
         self.task_indices[task] = len(self.heap) - 1
         self._sift_up(len(self.heap) - 1)
 
+    # @print_method_name
     def push_all(self, tasks: Iterable[WorkerTask]):
         for task in tasks:
             self.push(task)
 
+    # @print_method_name
     def _sift_up(self, index):
         task = self.heap[index]
         while index > 0:
@@ -184,20 +212,24 @@ class WorkerTaskMaxHeap:
         self.heap[index] = task
         self.task_indices[task] = index
 
+    # @print_method_name
     def get_tasks(self) -> List[WorkerTask]:
         return self.heap
 
+    # @print_method_name
     def remove(self, task: WorkerTask):
-        index = self.task_indices[task]
-        last_task = self.heap.pop()
-        if index < len(self.heap):
-            self.heap[index] = last_task
-            self.task_indices[last_task] = index
-            self._sift_down(index)
-        del self.task_indices[task]
+        if (index := self.task_indices.get(task, None)) is not None:
+            last_task = self.heap.pop()
+            if index < len(self.heap):
+                self.heap[index] = last_task
+                self.task_indices[last_task] = index
+                self._sift_down(index)
+            del self.task_indices[task]
 
+    # @print_method_name
     def size(self):
         return len(self.heap)
 
+    # @print_method_name
     def __len__(self):
         return len(self.heap)

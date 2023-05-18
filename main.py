@@ -88,7 +88,7 @@ async def main():
     url3 = 'https://api.github.com/repos/MRSlouzk/External_tianxi_renpy/releases/assets/107215675'
     url4 = 'https://down.qq.com/qqweb/LinuxQQ/linuxqq_2.0.0-b2-1089_amd64.deb'
     url5 = 'https://dldir1.qq.com/qqfile/qq/PCQQ9.7.7/QQ9.7.7.29006.exe'
-    print(await mdownload_file_tqdm(url4, '.', 2, file_name="test", proxy='', headers={}))
+    print(await mdownload_file_tqdm(url4, '.', 2, file_name="test.deb", proxy='', headers={}))
 
 
 if __name__ == '__main__':

@@ -9,7 +9,7 @@ from tqdm import tqdm
 from download_worker import DownloadWorker
 from events import WorkerBufferFullEvent, WorkerInactiveEvent, WorkerActiveEvent, \
     WorkerReceivedTaskEvent
-from file_writer import FileWriter
+from file_writer import FileWriter, TestFileWriter
 from task import WorkerTask, WorkerTaskMaxHeap
 
 
@@ -39,16 +39,20 @@ class WorkerTasks:
         self.history = WorkerTaskHistory()
 
     def add_task(self, task: WorkerTask):
+        # 标记
+        task.assign(-1)
         self.history.append_history(task)
-        self.unfinished_tasks[task.get_state()].push(task)
-        self.unfinished_task_states[task] = task.get_state()
+        if not self.unfinished_tasks[task.get_state()].has(task):
+            self.unfinished_tasks[task.get_state()].push(task)
+            self.unfinished_task_states[task] = task.get_state()
 
     def add_tasks(self, tasks: Iterable[WorkerTask]):
         for task in tasks:
             self.add_task(task)
 
     def get_top_task(self, state: WorkerTask.State):
-        return self.unfinished_tasks[state].pop_max()
+        task = self.unfinished_tasks[state].pop_max()
+        return task
 
     def get_size(self, state: WorkerTask.State):
         return len(self.unfinished_tasks[state])
@@ -133,6 +137,7 @@ class DownloadWorkerManager:
     def try_divide_running_tasks(self, worker_num) -> List[WorkerTask]:
         """
         分配任务:
+        :param task_state:
         :param worker_num:可用worker数目
         :return:
         """
@@ -147,12 +152,33 @@ class DownloadWorkerManager:
                     break
         return new_tasks
 
+    def try_divide_pending_tasks(self, worker_num) -> List[WorkerTask]:
+        """
+        分配任务:
+        :param task_state:
+        :param worker_num:可用worker数目
+        :return:
+        """
+        new_tasks = []
+        if self._tasks.get_size(WorkerTask.State.PENDING) > 0:
+            for i in range(worker_num):
+                task = self._tasks.get_top_task(WorkerTask.State.PENDING)
+                if (new_task := task.try_divide()) is not None:
+                    new_tasks.append(new_task)
+                    self._tasks.add_tasks([task, new_task])
+                else:
+                    break
+        return new_tasks
+
     def try_feed_waiting_workers_task(self, workers: int) -> List[WorkerTask]:
         """
         将任务分配给workers
         优先分配PENDING的任务,然后是ERROR的任务，最后是RUNNING的任务
         PENDING分配如下：
-            直接加入tasks队列-1
+            如果该任务没有被分配:
+                直接加入tasks队列-1
+            如果任务已经被分配:
+                将任务平均分割,加入tasks队列
         ERROR分配如下：
             直接加入tasks队列
             可用worker数目-1
@@ -169,9 +195,17 @@ class DownloadWorkerManager:
                 # 直接分配
                 for i in range(workers):
                     if self._tasks.get_size(WorkerTask.State.PENDING) > 0:
-                        task = self._tasks.get_top_task(WorkerTask.State.PENDING)
-                        new_tasks.append(task)
-                        workers -= 1
+
+                        if not (task := self._tasks.get_top_task_ref(WorkerTask.State.PENDING)).is_assigned():
+                            # 如果这个任务还没有被分配(没有被标记或者被worker认领):
+                            self._tasks.get_top_task(WorkerTask.State.PENDING)
+                            new_tasks.append(task)
+                            workers -= 1
+                        else:
+                            # 如果已被分配(被标记或者被worker认领)
+                            tasks = self.try_divide_pending_tasks(workers)
+                            new_tasks.extend(tasks)
+                            workers -= len(tasks)
                     else:
                         break
                 break
@@ -189,16 +223,16 @@ class DownloadWorkerManager:
             # 最后是RUNNING的任务
             if self._tasks.get_size(WorkerTask.State.RUNNING) > 0:
                 # 平均分配
-                new_tasks.extend(self.try_divide_running_tasks(workers))
+                tasks = self.try_divide_running_tasks(workers)
+                new_tasks.extend(tasks)
                 break
             break
         return new_tasks
 
     async def start(self):
         with tqdm(total=self._file_size, unit='B', unit_scale=True, unit_divisor=1024, desc=self._file_name,
-                  leave=False) as self._progress_bar:
+                  leave=False, mininterval=10) as self._progress_bar:
             async with ClientSession(headers=self._headers) as self._session:
-
                 # TODO 读取history
                 # 初始化Worker的等待队列,第一个创建的Task是整个文件的
                 task = WorkerTask(self._url, 0, self._file_size - 1, self._session, -1, self._headers, self._proxy)
@@ -209,18 +243,23 @@ class DownloadWorkerManager:
                 self.spawn_workers(self._session)
 
                 # 初始化Writer
-                self.file_writer = FileWriter(self._file_name, self._file_size, self._progress_bar, self.buffer_queue)
+                self.file_writer = TestFileWriter(self._file_name, self._file_size, self._progress_bar,
+                                                  self.buffer_queue)
 
                 concurrent_list = [worker.start_consuming() for worker in self.worker_instances]
 
                 worker_group = asyncio.gather(*concurrent_list)
 
                 # 启动workers,和writer
-                _, pending = await asyncio.wait([worker_group, self.file_writer.start_consuming()],
-                                                return_when=asyncio.FIRST_COMPLETED)
-                # 剩下的一定是writer
-                self.buffer_queue.put_nowait(None)
+                done, pending = await asyncio.wait([worker_group, self.file_writer.start_consuming()],
+                                                   return_when=asyncio.FIRST_COMPLETED)
 
+                await asyncio.sleep(1)
+                # 剩下的一定是writer
+                await self.buffer_queue.put(None)
+                await pending.pop()
+                # 等待所有任务缓冲区中的数据都写入文件
+                # await self.buffer_queue.join()
                 print("下载完成")
 
     def spawn_workers(self, session):
@@ -231,14 +270,17 @@ class DownloadWorkerManager:
         """
         self._session = session
         for i in range(self._workers):
-            worker_instance = DownloadWorker(self, i)
+            worker_instance = DownloadWorker(self, i + 1)
             self.worker_instances.append(worker_instance)
 
     def reset_progress_bar_postfix(self):
         register_workers = self._workers
         working_workers = len(
             [worker for worker in self.worker_instances if worker.state == DownloadWorker.State.WORKING])
-        self._progress_bar.set_postfix_str(f'活跃线程数:{working_workers} / {register_workers}')
+        print(f'活跃线程数:{working_workers} / {register_workers}')
+        print(self.worker_instances)
+        # TODO
+        # self._progress_bar.set_postfix_str(f'活跃线程数:{working_workers} / {register_workers}')
 
     def worker_active_event_handler(self, e: WorkerActiveEvent):
         self.reset_progress_bar_postfix()
@@ -253,17 +295,20 @@ class DownloadWorkerManager:
         self.reset_progress_bar_postfix()
 
         if e.sender.task is not None:
+            print(f"{e.sender.id}号Worker:任务完成:{e.sender.task}")
             # 更新task的所有权
             e.sender.task.update_owner(None)
 
             # 更新task的状态
             self._tasks.update_task_state(e.sender.task)
 
+        self._workers_request_num += 1
         # 添加原worker_request_task_event_handler的逻辑
         if not self.task_dispatch():
             # 下载结束
             for _ in range(self._workers):
                 self.pending_task_queue.put_nowait(None)
+            print("下载结束")
         else:
             # 正常分配
             pass
@@ -277,6 +322,7 @@ class DownloadWorkerManager:
         """
         try:
             self.buffer_queue.put_nowait((e.current_byte, e.buffer))
+            print(f"{e.sender.id}号Worker:buffer满了，已经加入到文件写入队列中,总长{len(e.buffer)}")
         except asyncio.QueueFull:
             e.reject()
         pass
@@ -291,6 +337,7 @@ class DownloadWorkerManager:
                 # 下载结束
                 for _ in range(self._workers):
                     self.pending_task_queue.put_nowait(None)
+                print("下载结束")
             else:
                 # 正常分配
                 pass
@@ -303,12 +350,18 @@ class DownloadWorkerManager:
         任务分配
         :return:
         """
-        if self._workers_request_num >= self._workers // 4:
+        if self._workers_request_num >= self._workers // 2:
             tasks = self.try_feed_waiting_workers_task(self._workers_request_num)
-            for task in tasks:
-                self.pending_task_queue.put_nowait(task)
-                self._workers_request_num -= 1
-            return tasks != []
+            print(
+                f"{self._workers_request_num}个worker等待任务:{[worker.id for worker in self.worker_instances if worker.state == DownloadWorker.State.WAITING]}")
+            if rv := (tasks != []):
+                self._tasks.add_tasks(tasks)
+                for task in tasks:
+                    self.pending_task_queue.put_nowait(task)
+                    print(f"分配任务:{task}")
+                    self._workers_request_num -= 1
+            print(f"分配了{len(tasks)}个任务")
+            return rv
         else:
             # dismiss
             return False

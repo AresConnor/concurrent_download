@@ -33,7 +33,7 @@ class DownloadWorker:
                                                        receiver=self._manager.worker_inactive_event_handler)
         self.workerActiveEvent = WorkerActiveEvent(sender=self, receiver=self._manager.worker_active_event_handler)
         self.workerReceivedTaskEvent = WorkerReceivedTaskEvent(sender=self,
-                                                               receiver=self._manager.worker_active_event_handler)
+                                                               receiver=self._manager.worker_received_task_event_handler)
 
         self.on_worker_inactive(WorkerTask.State.FINISHED)
 
@@ -51,7 +51,7 @@ class DownloadWorker:
                                               timeout=60) as response:
                 if not response.ok:
                     print(f"status error: {response.status}")
-                    # senf event
+                    # send event
                     self.on_worker_inactive(WorkerTask.State.ERROR)
                     return
 
@@ -78,18 +78,17 @@ class DownloadWorker:
                     data_len = len(data)
                     # receiving data from server
                     if self._task.current_byte + data_len <= self._task.end_byte:
-                        # self._pbar.update(data_len)
-                        # self._task.current_byte += data_len
-                        self._worker_buffer += data
+                        self._worker_buffer.extend(data)
 
                     # receiving data from server end
                     else:
-                        data_len = self._task.end_byte - self._task.current_byte
-                        # self._pbar.update(data_len)
-                        self._worker_buffer += data[data_len]
+                        try:
+                            self._worker_buffer.extend(data[data_len])
+                        except Exception:
+                            print(len(data), data_len)
+
                         # send buffer full event
                         self.on_buffer_full()
-
                         break
 
                 # send event
@@ -115,12 +114,13 @@ class DownloadWorker:
                 break
             elif self._worker_state == DownloadWorker.State.WAITING:
                 task = await self._manager.pending_task_queue.get()
-                await asyncio.sleep(0.1)
+                self.on_worker_task_received()
                 # 接收到None则表示总下载已经结束
                 if task is not None:
                     await self.feed_task(task)
                 else:
                     # 代表下载结束
+                    print(f"第{self._worker_id}号Worker退出")
                     break
             else:
                 await asyncio.sleep(0.1)
@@ -184,3 +184,9 @@ class DownloadWorker:
     @property
     def task(self):
         return self._task
+
+    def __str__(self):
+        return f"Worker {self._worker_id}, state={self._worker_state}, task_id={self.task.id if self._task else None}"
+
+    def __repr__(self):
+        return self.__str__()
